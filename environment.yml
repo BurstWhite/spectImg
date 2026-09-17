@@ -1,0 +1,14 @@
+name: spectimg
+channels:
+  - conda-forge
+dependencies:
+  - python=3.13
+  - numpy>=1.24
+  - scipy>=1.10
+  - pillow>=10
+  # soundfile is optional: without it, output is limited to 16-bit PCM, which
+  # is the default anyway.  It is installed through pip because conda-forge
+  # mirrors do not always carry `python-soundfile`.
+  - pip
+  - pip:
+      - soundfile>=0.12

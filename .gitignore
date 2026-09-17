@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# local environments
+.venv/
+.conda/
+.conda-pkgs/
+.cache/
+.fakehome/
+.condarc
+
+# generated audio / verification images
+demo/
+out/
