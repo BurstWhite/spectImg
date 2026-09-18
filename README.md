@@ -14,13 +14,28 @@ python img2spec.py logo.png logo.wav
 
 STFT 的结果是**复数**，而图片只提供了**幅度**，相位完全未知。相位携带的信息量超过一半，所以「生成一个频谱恰好等于这张图的音频」在数学上**不可能精确成立**。
 
-这是一个**相位重建**问题，本项目用 **Griffin-Lim 迭代**求解。你能得到的是：
+这是一个**相位重建**问题，本项目提供三种引擎（`--engine`）：
+
+| 引擎 | 原理 | 适合 | 速度 |
+|---|---|---|---|
+| `grad`（默认） | 直接对 waveform 做 dB 域谱损失的梯度下降 | 任意图片，暗部最干净 | 10 秒音频约 20–40 s |
+| `sines` | 逐 bin 正弦加法合成 | 稀疏线条图 / logo | 秒级 |
+| `gl` | 经典 Griffin-Lim 迭代 | 兼容旧版本 | 秒级 |
+
+在一张照片级图片上实测（`--min-db -80`）：
+
+| 引擎 | 静音区噪声地板 | 中间调误差 |
+|---|---|---|
+| gl | −64 dB（肉眼可见的颗粒"地毯"） | ±3.8 dB |
+| **grad** | **−91 dB** | **±1.7 dB** |
+
+`grad` 是纯 numpy 实现的解析梯度（STFT 的伴随算子），无 PyTorch 依赖；`sines` 同时充当它的初始化。你能得到的是：
 
 - ✅ 图片的结构能清楚听出来——横条是持续音，斜线是滑音，竖条纹是打击/噪声，文字轮廓会变成有节奏的质感
-- ⚠️ 音色带有 Griffin-Lim 特有的「相位感 / 金属感」，不是真实录音的质感
+- ⚠️ 音色带有合成的"相位感/金属感"，不是真实录音的质感
 - ❌ 不可能是逐位精确的反变换，也不该拿它做数据隐藏
 
-想要更干净的音质，唯一的路是把 Griffin-Lim 换成神经声码器（HiFi-GAN 之类），代价是要装 PyTorch 和下载预训练权重。当前实现是纯 `numpy + scipy`，秒级出结果、可复现（`--seed` 固定）。
+想要更接近录音的音色，唯一的路是把声码器换成神经网络的（HiFi-GAN 之类），代价是要装 PyTorch 和下载预训练权重。当前实现是纯 `numpy + scipy`，可复现（`--seed` 固定）。
 
 ---
 
@@ -172,7 +187,10 @@ python img2spec.py pic.png try_log.wav    --freq-scale log
 
 | 参数 | 默认 | 作用 |
 |---|---|---|
-| `--iterations` | `64` | Griffin-Lim 迭代次数，`0` = 纯随机相位（噪声音频，值得听一次做对比） |
+| `--engine` | `grad` | `grad` / `sines` / `gl`，见上文对比表 |
+| `--steps` | `600` | grad 引擎的优化步数（50–1500） |
+| `--lr` | `0.05` | grad 引擎步长（归一化梯度 + 余弦衰减） |
+| `--iterations` | `64` | gl 引擎的 Griffin-Lim 迭代次数，`0` = 纯随机相位 |
 | `--momentum` | `0.99` | Fast Griffin-Lim 动量 |
 | `--seed` | `0` | 初始相位随机种子，固定后可复现 |
 
@@ -207,11 +225,12 @@ python img2spec.py pic.png try_log.wav    --freq-scale log
  ├─ 频率轴重映射（log/mel 网格 → 音频的线性 bin）  ← 见下方「坑 2」
  └─ 目标幅度谱 M
         ↓
-    Griffin-Lim（带 Fast GL 动量）
-      ① y = ISTFT(M · e^{jφ})，φ 初始为随机相位
-      ② φ̂ = ∠STFT(y)
-      ③ φ ← φ̂ + momentum·(φ̂ − φ)
-      ④ 重复，最后用 φ̂ 重新合成一次
+    重建引擎（--engine）
+      grad（默认）：sines 合成作为初始 y₀，然后对
+        L(y) = mean((log|STFT(y)| − log M)²) 做归一化梯度下降
+        （解析梯度 = STFT 的伴随算子，纯 numpy），余弦衰减步长
+      sines：逐 bin 连续正弦，幅度沿帧线性插值
+      gl：Griffin-Lim 迭代（随机初始相位 + Fast GL 动量）
         ↓
     峰值归一化 → 写 WAV
         ↓
@@ -241,7 +260,7 @@ python img2spec.py pic.png try_log.wav    --freq-scale log
 ## 测试
 
 ```bash
-python -m unittest discover -s tests -v     # 38 个测试
+python -m unittest discover -s tests -v     # 44 个测试
 python -m pytest tests -q                   # 或者用 pytest
 ```
 
@@ -251,6 +270,7 @@ python -m pytest tests -q                   # 或者用 pytest
 - 图片 → 幅度谱的极性（顶部=高频）、全黑=静音、全白=满幅、渐变单调
 - STFT/ISTFT 内部往返误差 < 1e-10、标量归一化在两端不产生瞬态
 - Griffin-Lim 收敛性（合法目标 vs 不可能目标）、种子可复现、静音输入不产生 NaN
+- sines 引擎单 bin 命中目标、grad 引擎损失下降、sines 初始化优于随机初始化、输出无 NaN
 - 归一化与 WAV 写出（削波而非回绕）、非法位深
 - 时长/帧数规划与 `--max-duration` 截断
 - CLI 端到端、纯黑图、1×1 图、非 2 的幂 `--n-fft`、图片不存在
@@ -273,5 +293,5 @@ python -m pytest tests -q                   # 或者用 pytest
 |---|---|
 | `img2spec.py` | 主脚本，全部逻辑 |
 | `environment.yml` | conda 环境定义 |
-| `tests/test_img2spec.py` | 38 个单元测试 |
+| `tests/test_img2spec.py` | 44 个单元测试 |
 | `tools/make_pattern.py` | 生成合成演示图 |

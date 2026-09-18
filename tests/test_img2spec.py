@@ -292,6 +292,80 @@ class TestGriffinLim(unittest.TestCase):
         self.assertEqual(np.abs(y).max(), 0.0)
 
 
+class TestSineSynth(unittest.TestCase):
+    def test_single_bin_hits_its_target(self):
+        """One steady tone: additive synthesis is exact up to windowing."""
+        w = m.hann_window(N_FFT)
+        n_frames = 32
+        target = np.zeros((N_BINS, n_frames))
+        target[40, :] = 0.5
+        y = m.sine_synth(target, sample_rate=SR, n_fft=N_FFT, hop=HOP)
+        act = m.stft_mag(y, N_FFT, HOP, w)
+        np.testing.assert_allclose(
+            np.median(act[40, 4:-4]), 0.5, rtol=0.02
+        )
+
+    def test_rejects_wrong_bin_count(self):
+        with self.assertRaises(ValueError):
+            m.sine_synth(np.zeros((7, 4)), sample_rate=SR, n_fft=N_FFT, hop=HOP)
+
+    def test_silent_target_is_silent(self):
+        y = m.sine_synth(np.zeros((N_BINS, 16)), sample_rate=SR, n_fft=N_FFT, hop=HOP)
+        np.testing.assert_array_equal(y, 0.0)
+
+
+class TestGradSynth(unittest.TestCase):
+    def test_loss_decreases_from_random_init(self):
+        """The optimizer must make the dB-spectrogram closer, not just move."""
+        w = m.hann_window(N_FFT)
+        n_frames = 24
+        rng = np.random.default_rng(3)
+        target = rng.uniform(0.01, 1.0, (N_BINS, n_frames))
+
+        def loss(y):
+            act = m.stft_mag(y, N_FFT, HOP, w)
+            return float(np.mean((np.log(act + 1e-5) - np.log(target + 1e-5)) ** 2))
+
+        y0 = 0.1 * rng.standard_normal(N_FFT + HOP * (n_frames - 1))
+        y, _ = m.grad_synth(
+            target, sample_rate=SR, n_fft=N_FFT, hop=HOP,
+            init=y0, steps=150, lr=0.05,
+        )
+        self.assertLess(loss(y), loss(y0))
+
+    def test_sines_init_beats_random_init(self):
+        """Initialization from additive synthesis converges to lower loss."""
+        w = m.hann_window(N_FFT)
+        n_frames = 24
+        target = np.zeros((N_BINS, n_frames))
+        target[40, :] = 0.5
+        target[41, :] = 0.3
+
+        def loss(y):
+            act = m.stft_mag(y, N_FFT, HOP, w)
+            return float(np.mean((np.log(act + 1e-5) - np.log(target + 1e-5)) ** 2))
+
+        y_rand = 0.1 * np.random.default_rng(0).standard_normal(
+            N_FFT + HOP * (n_frames - 1)
+        )
+        y_init = m.sine_synth(target, sample_rate=SR, n_fft=N_FFT, hop=HOP)
+        out_rand, _ = m.grad_synth(
+            target, sample_rate=SR, n_fft=N_FFT, hop=HOP, init=y_rand, steps=100
+        )
+        out_init, _ = m.grad_synth(
+            target, sample_rate=SR, n_fft=N_FFT, hop=HOP, init=y_init, steps=100
+        )
+        self.assertLess(loss(out_init), loss(out_rand))
+
+    def test_output_is_finite(self):
+        rng = np.random.default_rng(1)
+        target = rng.uniform(0.0, 1.0, (N_BINS, 8))
+        y, _ = m.grad_synth(
+            target, sample_rate=SR, n_fft=N_FFT, hop=HOP, steps=20
+        )
+        self.assertTrue(np.all(np.isfinite(y)))
+
+
 class TestOutput(unittest.TestCase):
     def test_normalize_modes(self):
         y = np.array([0.0, 0.5, -0.25])
