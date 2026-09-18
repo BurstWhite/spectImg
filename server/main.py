@@ -42,6 +42,7 @@ MAX_PIXELS = 30_000_000  # PIL's own guard value; rejects decompression bombs
 
 ALLOWED_SR = (8000, 11025, 16000, 22050, 32000, 44100, 48000)
 ENGINES = ("grad", "sines", "gl")
+FREQ_MIN, FREQ_MAX = 20.0, 20000.0
 
 app = FastAPI(title="img2spec service")
 app.add_middleware(
@@ -49,7 +50,7 @@ app.add_middleware(
     allow_origins=["*"],  # no auth anywhere; browsers still enforce same-origin
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
-    expose_headers=["X-Synthesis-Seconds", "X-Synthesis-Notes"],
+    expose_headers=["X-Synthesis-Seconds", "X-Synthesis-Notes", "X-Sample-Rate"],
 )
 
 
@@ -89,11 +90,13 @@ async def convert(
     engine: str = Form("grad"),
     steps: int = Form(600),
     freq_scale: str = Form("linear"),
+    fmin: float = Form(20.0),
+    fmax: float = Form(20000.0),
     duration: float | None = Form(None),
     min_db: float = Form(-80.0),
     gamma: float = Form(1.0),
     iterations: int = Form(64),
-    sr: int = Form(22050),
+    sr: int | None = Form(None),
     n_fft: int = Form(2048),
 ) -> Response:
     await verify_turnstile(
@@ -110,8 +113,17 @@ async def convert(
         raise HTTPException(400, f"freq_scale must be one of {img2spec.FREQ_SCALES}")
     if engine not in ENGINES:
         raise HTTPException(400, f"engine must be one of {ENGINES}")
-    if sr not in ALLOWED_SR:
+    _clamp("fmin", fmin, FREQ_MIN, 2000.0)
+    _clamp("fmax", fmax, 100.0, FREQ_MAX)
+    if fmin >= fmax:
+        raise HTTPException(400, "fmin must be below fmax")
+    if sr is None:
+        # smallest standard rate (>= 22.05 kHz for quality) that covers fmax
+        sr = next(s for s in ALLOWED_SR if s >= 22050 and s / 2 >= fmax)
+    elif sr not in ALLOWED_SR:
         raise HTTPException(400, f"sr must be one of {ALLOWED_SR}")
+    elif fmax > sr / 2:
+        raise HTTPException(400, f"fmax {fmax:g} Hz exceeds Nyquist for sr {sr}")
     if n_fft < 8 or n_fft & (n_fft - 1):
         raise HTTPException(400, "n_fft must be a power of two >= 8")
     _clamp("min_db", min_db, -120.0, 0.0)
@@ -143,6 +155,8 @@ async def convert(
             n_fft=n_fft,
             sample_rate=sr,
             freq_scale=freq_scale,
+            f_min=fmin,
+            f_max=fmax,
             min_db=min_db,
             gamma=gamma,
         )
@@ -172,6 +186,7 @@ async def convert(
     headers = {
         "Cache-Control": "no-store",
         "X-Synthesis-Seconds": f"{len(y) / sr:.2f}",
+        "X-Sample-Rate": str(sr),
         "X-Synthesis-Notes": "; ".join(notes),
     }
     return Response(content=wav_bytes, media_type="audio/wav", headers=headers)

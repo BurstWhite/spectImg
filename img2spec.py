@@ -151,11 +151,14 @@ def image_to_magnitude(
         # rather than as the -80 dB noise floor.
         mag[disp <= 0.0] = 0.0
 
-    if freq_scale != "linear":
+    if freq_scale != "linear" or f_min > 0.0 or f_max < nyquist:
         lin_freqs = np.arange(n_bins, dtype=np.float64) * sample_rate / n_fft
         disp_freqs = row_frequencies(n_bins, freq_scale, f_min, f_max)
         mag = remap_rows(mag, disp_freqs, lin_freqs)
-        mag[lin_freqs < f_min] = 0.0  # image content does not reach below f_min
+        # the image only covers [f_min, f_max]; outside that band is silence,
+        # not a clamp of the edge rows
+        mag[lin_freqs < f_min] = 0.0
+        mag[lin_freqs > f_max] = 0.0
 
     mag[0] = 0.0  # never synthesize DC: it is inaudible and eats headroom
     return mag

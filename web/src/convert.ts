@@ -4,6 +4,8 @@ export type Engine = "grad" | "sines" | "gl";
 export interface ConvertOptions {
   engine: Engine;
   freqScale: FreqScale;
+  fmin: number;
+  fmax: number;
   duration: number | null;
   minDb: number;
 }
@@ -13,6 +15,7 @@ export interface ConvertResult {
   name: string;
   url: string; // object URL, lives only in this browser tab
   seconds: number;
+  sampleRate: number;
   sizeBytes: number;
   createdAt: Date;
 }
@@ -40,6 +43,8 @@ export async function convertImage(
   form.append("turnstile_token", turnstileToken);
   form.append("engine", opts.engine);
   form.append("freq_scale", opts.freqScale);
+  form.append("fmin", String(opts.fmin));
+  form.append("fmax", String(opts.fmax));
   form.append("min_db", String(opts.minDb));
   if (opts.duration !== null) form.append("duration", String(opts.duration));
 
@@ -49,11 +54,13 @@ export async function convertImage(
   const blob = await res.blob();
   if (blob.size === 0) throw new Error("server returned an empty file");
   const seconds = Number(res.headers.get("X-Synthesis-Seconds") ?? 0);
+  const sampleRate = Number(res.headers.get("X-Sample-Rate") ?? 0);
   return {
     id: Date.now() + Math.random(),
     name: file.name.replace(/\.[^.]+$/, "") + ".wav",
     url: URL.createObjectURL(blob),
     seconds,
+    sampleRate,
     sizeBytes: blob.size,
     createdAt: new Date(),
   };

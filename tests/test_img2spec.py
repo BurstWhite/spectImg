@@ -117,7 +117,7 @@ class TestImageMapping(unittest.TestCase):
         """A ramp that is bright at the bottom of the image is loud in the bass."""
         mag = m.image_to_magnitude(
             gradient_image(), n_frames=8, n_fft=N_FFT, sample_rate=SR,
-            freq_scale="linear",
+            freq_scale="linear", f_min=0.0,
         )
         column = mag[1:, 0]  # row 0 is DC and is always zeroed
         self.assertGreater(column[0], column[-1])
@@ -126,7 +126,8 @@ class TestImageMapping(unittest.TestCase):
     def test_white_is_full_scale_and_black_is_floor(self):
         img = Image.new("L", (4, 4), 255)
         mag = m.image_to_magnitude(
-            img, n_frames=4, n_fft=N_FFT, sample_rate=SR, freq_scale="linear"
+            img, n_frames=4, n_fft=N_FFT, sample_rate=SR, freq_scale="linear",
+            f_min=0.0,
         )
         self.assertAlmostEqual(float(mag.max()), 1.0, places=9)
 
@@ -139,6 +140,20 @@ class TestImageMapping(unittest.TestCase):
         )
         self.assertGreater(mag[-4:].max(), 0.5, "top of image = treble end")
         self.assertEqual(mag[: N_BINS // 2].max(), 0.0)
+
+    def test_restricted_band_is_silent_outside(self):
+        """With f_min/f_max set, bins outside the band are silent on any scale."""
+        img = Image.new("L", (4, 16), 255)
+        for scale in ("linear", "log"):
+            mag = m.image_to_magnitude(
+                img, n_frames=4, n_fft=N_FFT, sample_rate=SR,
+                freq_scale=scale, f_min=1000.0, f_max=2000.0,
+            )
+            freqs = np.arange(N_BINS) * SR / N_FFT
+            self.assertEqual(mag[freqs < 1000.0].max(), 0.0, scale)
+            self.assertEqual(mag[freqs > 2000.0].max(), 0.0, scale)
+            in_band = (freqs >= 1000.0) & (freqs <= 2000.0)
+            self.assertGreater(mag[in_band].max(), 0.5, scale)
 
     def test_log_scale_compresses_the_treble(self):
         """Under log mapping the middle image row is a bass note, not a mid one.

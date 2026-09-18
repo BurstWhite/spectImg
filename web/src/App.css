@@ -126,6 +126,16 @@ header h1 {
   grid-column: 1 / -1;
 }
 
+.range-row {
+  display: flex;
+  gap: 12px;
+}
+
+.range-row input[type="range"] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
 .options select,
 .options input[type="number"] {
   padding: 8px 10px;

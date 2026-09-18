@@ -15,6 +15,8 @@ export default function App() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [freqScale, setFreqScale] = useState<FreqScale>("linear");
   const [engine, setEngine] = useState<Engine>("grad");
+  const [fmin, setFmin] = useState(20);
+  const [fmax, setFmax] = useState(20000);
   const [duration, setDuration] = useState<string>("");
   const [minDb, setMinDb] = useState(-80);
   const [token, setToken] = useState<string | null>(null);
@@ -58,7 +60,7 @@ export default function App() {
       if (dur !== null && (!Number.isFinite(dur) || dur < 1 || dur > 60)) {
         throw new Error("时长必须是 1–60 之间的秒数（留空表示按图片宽度自动）");
       }
-      const opts: ConvertOptions = { engine, freqScale, duration: dur, minDb };
+      const opts: ConvertOptions = { engine, freqScale, fmin, fmax, duration: dur, minDb };
       const result = await convertImage(file, token, opts);
       setResults((r) => [result, ...r]);
       // tokens are single-use: force the widget to issue a fresh one
@@ -165,6 +167,27 @@ export default function App() {
           />
         </label>
         <label className="wide">
+          频率范围 {fmin} Hz – {fmax} Hz
+          <span className="range-row">
+            <input
+              type="range"
+              min={20}
+              max={2000}
+              step={10}
+              value={fmin}
+              onChange={(e) => setFmin(Math.min(Number(e.target.value), fmax - 100))}
+            />
+            <input
+              type="range"
+              min={100}
+              max={20000}
+              step={100}
+              value={fmax}
+              onChange={(e) => setFmax(Math.max(Number(e.target.value), fmin + 100))}
+            />
+          </span>
+        </label>
+        <label className="wide">
           最暗像素电平 {minDb} dB
           <input
             type="range"
@@ -205,8 +228,8 @@ export default function App() {
               <div className="meta">
                 <strong>{r.name}</strong>
                 <span>
-                  {r.seconds.toFixed(1)}s · {formatBytes(r.sizeBytes)} ·{" "}
-                  {r.createdAt.toLocaleTimeString()}
+                  {r.seconds.toFixed(1)}s · {r.sampleRate ? `${r.sampleRate / 1000}kHz · ` : ""}
+                  {formatBytes(r.sizeBytes)} · {r.createdAt.toLocaleTimeString()}
                 </span>
               </div>
               <audio controls src={r.url} preload="metadata" />
