@@ -13,3 +13,7 @@ __pycache__/
 # generated audio / verification images
 demo/
 out/
+
+# web frontend
+web/node_modules/
+web/dist/
