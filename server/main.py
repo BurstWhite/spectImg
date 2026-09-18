@@ -113,8 +113,8 @@ async def convert(
         raise HTTPException(400, f"freq_scale must be one of {img2spec.FREQ_SCALES}")
     if engine not in ENGINES:
         raise HTTPException(400, f"engine must be one of {ENGINES}")
-    _clamp("fmin", fmin, FREQ_MIN, 2000.0)
-    _clamp("fmax", fmax, 100.0, FREQ_MAX)
+    _clamp("fmin", fmin, FREQ_MIN, FREQ_MAX - 100.0)
+    _clamp("fmax", fmax, FREQ_MIN + 100.0, FREQ_MAX)
     if fmin >= fmax:
         raise HTTPException(400, "fmin must be below fmax")
     if sr is None:
