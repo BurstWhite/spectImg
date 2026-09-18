@@ -162,6 +162,141 @@ def image_to_magnitude(
 
 
 # --------------------------------------------------------------------------- #
+# additive sine synthesis
+# --------------------------------------------------------------------------- #
+
+def sine_synth(
+    mag: np.ndarray,
+    *,
+    sample_rate: int,
+    n_fft: int,
+    hop: int,
+) -> np.ndarray:
+    """Synthesize *mag* additively: one continuous sine per FFT bin.
+
+    Every bin gets a globally phase-continuous sinusoid at exactly its bin
+    frequency (so its energy lands in that bin alone, with no leakage), whose
+    amplitude is the image envelope linearly interpolated between frame
+    centers.  Unlike Griffin-Lim this is constructive rather than iterative:
+    there is no random phase anywhere, so horizontal structures and flat areas
+    come out clean instead of grainy.  The residual error is the unavoidable
+    time-frequency smearing on steep vertical edges.
+
+    Returns the time-domain signal.
+    """
+    mag = np.asarray(mag, dtype=np.float64)
+    n_bins, n_frames = mag.shape
+    if n_bins != n_fft // 2 + 1:
+        raise ValueError(f"magnitude has {n_bins} bins, expected {n_fft // 2 + 1}")
+
+    length = n_fft + hop * (n_frames - 1)
+    freqs = np.arange(n_bins, dtype=np.float64) * sample_rate / n_fft
+    # A locally-constant amplitude A shows up in the windowed STFT as
+    # A * sum(window) / 2; pre-scale so the measured magnitude equals *mag*.
+    scale = 2.0 / hann_window(n_fft).sum()
+
+    centers = np.arange(n_frames, dtype=np.float64) * hop + n_fft // 2
+    k = np.arange(length, dtype=np.float64)
+
+    y = np.zeros(length, dtype=np.float64)
+    for b in range(n_bins):
+        row = mag[b]
+        if not np.any(row):
+            continue
+        env = np.interp(k, centers, row * scale)
+        y += env * np.sin(2.0 * np.pi * freqs[b] * k / sample_rate)
+    return y
+
+
+# --------------------------------------------------------------------------- #
+# gradient descent on the log-magnitude spectrogram
+# --------------------------------------------------------------------------- #
+
+def grad_synth(
+    mag: np.ndarray,
+    *,
+    sample_rate: int,
+    n_fft: int,
+    hop: int,
+    init: np.ndarray | None = None,
+    steps: int = 300,
+    lr: float = 0.05,
+    floor: float = 1e-5,
+    window: np.ndarray | None = None,
+    progress: bool = False,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Optimize a waveform so its STFT magnitude matches *mag* in decibels.
+
+    Normalized gradient descent on ``mean((log(S + floor) - log(M + floor))^2)``
+    with cosine learning-rate decay.  Griffin-Lim minimises an L2 distance on
+    linear magnitudes, which is dominated by the loudest bins; the log-domain
+    loss weighs every bin the way a spectrogram *viewer* does, so dark areas
+    and mid-greys - exactly what the eye judges - get optimised too.  The
+    gradient of the STFT magnitude wrt the waveform is analytic (the adjoint
+    of windowing + overlap-add), so no autograd framework is needed.  The step
+    is normalized to the current signal norm: Adam-style per-coordinate steps
+    inject broadband noise whose level is unrelated to the signal's, which in
+    the dB domain swamps the silent bins.
+
+    Returns ``(signal, window)``.
+    """
+    mag = np.asarray(mag, dtype=np.float64)
+    n_bins, n_frames = mag.shape
+    if n_bins != n_fft // 2 + 1:
+        raise ValueError(f"magnitude has {n_bins} bins, expected {n_fft // 2 + 1}")
+    if window is None:
+        window = hann_window(n_fft)
+
+    length = n_fft + hop * (n_frames - 1)
+    if init is None:
+        rng = np.random.default_rng(0)
+        y = 0.1 * rng.standard_normal(length)
+    else:
+        y = np.asarray(init, dtype=np.float64).copy()
+        if len(y) < length:
+            y = np.pad(y, (0, length - len(y)))
+
+    target = np.log(mag + floor)
+    idx = np.arange(n_fft, dtype=np.int64)
+
+    for i in range(steps):
+        frames = y[np.arange(n_frames, dtype=np.int64)[:, None] * hop + idx] * window
+        spec = rfft(frames, axis=-1).T  # (n_bins, n_frames)
+        mag_act = np.abs(spec)
+        log_act = np.log(mag_act + floor)
+        resid = log_act - target  # (n_bins, n_frames)
+
+        # dL/d|X| for L = mean(resid^2):
+        d_mag = 2.0 * resid / (mag_act + floor) / resid.size
+        # The dB-domain gradient is unbounded as |X| -> 0 (silent bins whose
+        # actual level sits above the floor); clipping keeps it well-behaved.
+        np.clip(d_mag, -1e3, 1e3, out=d_mag)
+        # dL/dX = dL/d|X| * X/|X|.  The adjoint of rfft is NOT irfft: for a
+        # real signal it is (n_fft/2) * irfft, with the DC and Nyquist rows
+        # doubled because the conjugate-symmetric extension counts interior
+        # bins twice but the edge bins once.
+        d_spec = np.where(mag_act > 0, d_mag, 0.0) * (spec / np.maximum(mag_act, TINY))
+        d_spec[0] *= 2.0
+        if n_fft % 2 == 0:
+            d_spec[-1] *= 2.0
+        d_frames = irfft(d_spec.T, n=n_fft, axis=-1) * (n_fft / 2.0) * window
+        grad = np.zeros(length)
+        for f in range(n_frames):
+            s = f * hop
+            grad[s : s + n_fft] += d_frames[f]
+        gnorm = float(np.linalg.norm(grad))
+        ynorm = float(np.linalg.norm(y))
+        if gnorm > TINY and ynorm > TINY:
+            step = (lr * 0.5 * (1.0 + np.cos(np.pi * i / steps))) * ynorm / gnorm
+            y = y - step * grad
+        if progress and (i + 1) % max(1, steps // 10) == 0:
+            loss = float(np.mean(resid**2))
+            print(f"  grad {i + 1}/{steps}  loss {loss:.5f}", file=sys.stderr)
+
+    return y, window
+
+
+# --------------------------------------------------------------------------- #
 # STFT / ISTFT / Griffin-Lim
 # --------------------------------------------------------------------------- #
 
@@ -231,12 +366,15 @@ def griffin_lim(
     momentum: float = 0.99,
     seed: int = 0,
     window: np.ndarray | None = None,
+    init: np.ndarray | None = None,
     progress: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Estimate a signal whose STFT magnitude is *mag*, via fast Griffin-Lim.
 
-    Returns ``(signal, window)``.  ``n_iter <= 0`` degenerates to plain inverse
-    STFT with random phase, which is the noisy baseline worth listening to once.
+    Returns ``(signal, window)``.  ``init`` may be a time-domain signal to
+    steal the starting phase from (e.g. the output of :func:`sine_synth`),
+    which converges faster and from a far better basin than random phase.
+    ``n_iter <= 0`` degenerates to a single ISTFT from the initial phase.
     """
     mag = np.asarray(mag, dtype=np.float64)
     n_bins, n_frames = mag.shape
@@ -246,8 +384,14 @@ def griffin_lim(
         window = hann_window(n_fft)
 
     length = n_fft + hop * (n_frames - 1)
-    rng = np.random.default_rng(seed)
-    phi = rng.uniform(-np.pi, np.pi, size=mag.shape)
+    if init is not None:
+        init = np.asarray(init, dtype=np.float64)
+        if len(init) < length:
+            init = np.pad(init, (0, length - len(init)))
+        phi = np.angle(stft(init, n_fft, hop, window))
+    else:
+        rng = np.random.default_rng(seed)
+        phi = rng.uniform(-np.pi, np.pi, size=mag.shape)
 
     if n_iter <= 0:
         return istft(mag * np.exp(1j * phi), n_fft, hop, window, length), window
@@ -466,6 +610,27 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--bits", choices=BITS, default=16, help="output bit depth")
 
     g = p.add_argument_group("reconstruction")
+    g.add_argument(
+        "--engine",
+        choices=("sines", "gl", "grad"),
+        default="grad",
+        help="grad: gradient descent on the dB spectrogram (best fidelity); "
+        "sines: additive synthesis (cleanest on sparse line art); "
+        "gl: Griffin-Lim",
+    )
+    g.add_argument(
+        "--steps",
+        type=int,
+        default=600,
+        help="grad engine: optimization steps",
+    )
+    g.add_argument("--lr", type=float, default=0.05, help="grad engine: step size")
+    g.add_argument(
+        "--polish",
+        type=int,
+        default=0,
+        help="extra Griffin-Lim iterations on top of sines (rarely needed)",
+    )
     g.add_argument("--iterations", type=int, default=64, help="Griffin-Lim iterations; 0 = random phase")
     g.add_argument("--momentum", type=float, default=0.99, help="fast Griffin-Lim momentum")
     g.add_argument("--seed", type=int, default=0, help="random seed for the initial phase")
@@ -527,16 +692,45 @@ def main(argv: list[str] | None = None) -> int:
     if not np.any(mag > 0.0):
         warn("the target spectrogram is all zeros; writing silence")
 
-    say(f"griffin-lim: {args.iterations} iterations (momentum {args.momentum})")
-    y, window = griffin_lim(
-        mag,
-        n_fft=args.n_fft,
-        hop=hop,
-        n_iter=args.iterations,
-        momentum=args.momentum,
-        seed=args.seed,
-        progress=not args.quiet,
-    )
+    if args.engine == "grad":
+        say(f"engine: gradient descent, {args.steps} steps (lr {args.lr})")
+        y_init = sine_synth(mag, sample_rate=args.sr, n_fft=args.n_fft, hop=hop)
+        y, window = grad_synth(
+            mag,
+            sample_rate=args.sr,
+            n_fft=args.n_fft,
+            hop=hop,
+            init=y_init,
+            steps=args.steps,
+            lr=args.lr,
+            progress=not args.quiet,
+        )
+    elif args.engine == "sines":
+        say(f"engine: additive sine synthesis (polish {args.polish})")
+        y = sine_synth(mag, sample_rate=args.sr, n_fft=args.n_fft, hop=hop)
+        if args.polish > 0:
+            y, window = griffin_lim(
+                mag,
+                n_fft=args.n_fft,
+                hop=hop,
+                n_iter=args.polish,
+                momentum=args.momentum,
+                init=y,
+                progress=not args.quiet,
+            )
+        else:
+            window = hann_window(args.n_fft)
+    else:
+        say(f"engine: griffin-lim, {args.iterations} iterations (momentum {args.momentum})")
+        y, window = griffin_lim(
+            mag,
+            n_fft=args.n_fft,
+            hop=hop,
+            n_iter=args.iterations,
+            momentum=args.momentum,
+            seed=args.seed,
+            progress=not args.quiet,
+        )
 
     y = normalize(y, args.normalize, args.target_db)
     write_wav(args.output, y, args.sr, args.bits)

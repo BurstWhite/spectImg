@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Turnstile, type TurnstileInstance } from "@marsidev/react-turnstile";
-import { convertImage, type ConvertOptions, type ConvertResult, type FreqScale } from "./convert";
+import { convertImage, type ConvertOptions, type ConvertResult, type Engine, type FreqScale } from "./convert";
 import "./App.css";
 
 const SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY as string;
@@ -14,6 +14,7 @@ export default function App() {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [freqScale, setFreqScale] = useState<FreqScale>("linear");
+  const [engine, setEngine] = useState<Engine>("grad");
   const [duration, setDuration] = useState<string>("");
   const [minDb, setMinDb] = useState(-80);
   const [token, setToken] = useState<string | null>(null);
@@ -57,7 +58,7 @@ export default function App() {
       if (dur !== null && (!Number.isFinite(dur) || dur < 1 || dur > 60)) {
         throw new Error("时长必须是 1–60 之间的秒数（留空表示按图片宽度自动）");
       }
-      const opts: ConvertOptions = { freqScale, duration: dur, minDb };
+      const opts: ConvertOptions = { engine, freqScale, duration: dur, minDb };
       const result = await convertImage(file, token, opts);
       setResults((r) => [result, ...r]);
       // tokens are single-use: force the widget to issue a fresh one
@@ -134,6 +135,14 @@ export default function App() {
 
       <section className="options">
         <label>
+          还原质量
+          <select value={engine} onChange={(e) => setEngine(e.target.value as Engine)}>
+            <option value="grad">最还原（约 20–40 秒）</option>
+            <option value="sines">快速（几秒，适合线条图）</option>
+            <option value="gl">经典 Griffin-Lim</option>
+          </select>
+        </label>
+        <label>
           频率轴
           <select
             value={freqScale}
@@ -182,7 +191,7 @@ export default function App() {
           disabled={!file || !token || busy}
           onClick={onConvert}
         >
-          {busy ? "合成中…（Griffin-Lim 迭代，约需数秒到十几秒）" : "转换为 .wav"}
+          {busy ? "合成中…（可能需要十几到几十秒，请勿关闭页面）" : "转换为 .wav"}
         </button>
         {error && <p className="error">{error}</p>}
       </section>
@@ -215,7 +224,7 @@ export default function App() {
       </section>
 
       <footer>
-        相位由 Griffin-Lim 估计，频谱可辨识但非逐位精确。服务器不保存任何上传内容。
+        相位由优化算法估计，频谱可辨识但非逐位精确。服务器不保存任何上传内容。
       </footer>
     </div>
   );

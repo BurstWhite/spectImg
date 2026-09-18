@@ -41,6 +41,7 @@ MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 MAX_PIXELS = 30_000_000  # PIL's own guard value; rejects decompression bombs
 
 ALLOWED_SR = (8000, 11025, 16000, 22050, 32000, 44100, 48000)
+ENGINES = ("grad", "sines", "gl")
 
 app = FastAPI(title="img2spec service")
 app.add_middleware(
@@ -85,6 +86,8 @@ def health() -> JSONResponse:
 async def convert(
     image: UploadFile = File(...),
     turnstile_token: str = Form(...),
+    engine: str = Form("grad"),
+    steps: int = Form(600),
     freq_scale: str = Form("linear"),
     duration: float | None = Form(None),
     min_db: float = Form(-80.0),
@@ -105,6 +108,8 @@ async def convert(
 
     if freq_scale not in img2spec.FREQ_SCALES:
         raise HTTPException(400, f"freq_scale must be one of {img2spec.FREQ_SCALES}")
+    if engine not in ENGINES:
+        raise HTTPException(400, f"engine must be one of {ENGINES}")
     if sr not in ALLOWED_SR:
         raise HTTPException(400, f"sr must be one of {ALLOWED_SR}")
     if n_fft < 8 or n_fft & (n_fft - 1):
@@ -112,6 +117,7 @@ async def convert(
     _clamp("min_db", min_db, -120.0, 0.0)
     _clamp("gamma", gamma, 0.1, 5.0)
     _clamp("iterations", iterations, 0, 256)
+    _clamp("steps", steps, 50, 1500)
     if duration is not None:
         _clamp("duration", duration, 1.0, 60.0)
 
@@ -141,9 +147,22 @@ async def convert(
             gamma=gamma,
         )
 
-    y, _ = img2spec.griffin_lim(
-        mag, n_fft=n_fft, hop=hop, n_iter=iterations, progress=False
-    )
+    if engine == "grad":
+        y_init = img2spec.sine_synth(mag, sample_rate=sr, n_fft=n_fft, hop=hop)
+        y, _ = img2spec.grad_synth(
+            mag,
+            sample_rate=sr,
+            n_fft=n_fft,
+            hop=hop,
+            init=y_init,
+            steps=steps,
+        )
+    elif engine == "sines":
+        y = img2spec.sine_synth(mag, sample_rate=sr, n_fft=n_fft, hop=hop)
+    else:
+        y, _ = img2spec.griffin_lim(
+            mag, n_fft=n_fft, hop=hop, n_iter=iterations, progress=False
+        )
     y = img2spec.normalize(y, "peak", -1.0)
 
     buf = io.BytesIO()

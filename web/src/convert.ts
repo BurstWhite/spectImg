@@ -1,6 +1,8 @@
 export type FreqScale = "linear" | "log" | "mel";
+export type Engine = "grad" | "sines" | "gl";
 
 export interface ConvertOptions {
+  engine: Engine;
   freqScale: FreqScale;
   duration: number | null;
   minDb: number;
@@ -36,6 +38,7 @@ export async function convertImage(
   const form = new FormData();
   form.append("image", file);
   form.append("turnstile_token", turnstileToken);
+  form.append("engine", opts.engine);
   form.append("freq_scale", opts.freqScale);
   form.append("min_db", String(opts.minDb));
   if (opts.duration !== null) form.append("duration", String(opts.duration));
