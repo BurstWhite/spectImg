@@ -171,6 +171,7 @@ def sine_synth(
     sample_rate: int,
     n_fft: int,
     hop: int,
+    seed: int = 0,
 ) -> np.ndarray:
     """Synthesize *mag* additively: one continuous sine per FFT bin.
 
@@ -181,6 +182,11 @@ def sine_synth(
     there is no random phase anywhere, so horizontal structures and flat areas
     come out clean instead of grainy.  The residual error is the unavoidable
     time-frequency smearing on steep vertical edges.
+
+    Each bin's starting phase is random: with all sines starting at phase 0
+    they realign constructively every ``n_fft`` samples, and the resulting
+    comb of spikes (~30 dB crest) hijacks peak normalisation and squashes the
+    whole file.  Phase offsets do not affect a bin's own magnitude.
 
     Returns the time-domain signal.
     """
@@ -197,6 +203,8 @@ def sine_synth(
 
     centers = np.arange(n_frames, dtype=np.float64) * hop + n_fft // 2
     k = np.arange(length, dtype=np.float64)
+    rng = np.random.default_rng(seed)
+    phi0 = rng.uniform(0.0, 2.0 * np.pi, size=n_bins)
 
     y = np.zeros(length, dtype=np.float64)
     for b in range(n_bins):
@@ -204,7 +212,7 @@ def sine_synth(
         if not np.any(row):
             continue
         env = np.interp(k, centers, row * scale)
-        y += env * np.sin(2.0 * np.pi * freqs[b] * k / sample_rate)
+        y += env * np.sin(2.0 * np.pi * freqs[b] * k / sample_rate + phi0[b])
     return y
 
 
