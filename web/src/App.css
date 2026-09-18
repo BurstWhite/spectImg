@@ -211,14 +211,68 @@ header h1 {
   grid-column: 1 / -1;
 }
 
-.range-row {
-  display: flex;
-  gap: 12px;
+.range-slider {
+  position: relative;
+  height: 28px;
+  margin: 10px 8px 2px;
+  cursor: pointer;
+  touch-action: none;
 }
 
-.range-row input[type="range"] {
-  flex: 1;
-  accent-color: var(--accent);
+.rs-track {
+  position: absolute;
+  top: 12px;
+  left: 0;
+  right: 0;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+}
+
+.rs-fill {
+  position: absolute;
+  top: 12px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.rs-handle {
+  position: absolute;
+  top: 6px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--card);
+  border: 2px solid var(--accent);
+  transform: translateX(-50%);
+  cursor: grab;
+}
+
+.rs-handle:active {
+  cursor: grabbing;
+}
+
+.rs-handle:focus-visible,
+.range-slider.focused .rs-handle.active {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.rs-min,
+.rs-max {
+  position: absolute;
+  top: 26px;
+  font-size: 0.75rem;
+  color: var(--fg-dim);
+}
+
+.rs-min {
+  left: 0;
+}
+
+.rs-max {
+  right: 0;
 }
 
 .options select,

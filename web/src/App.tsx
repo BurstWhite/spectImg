@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Turnstile, type TurnstileInstance } from "@marsidev/react-turnstile";
 import { convertImage, type ConvertOptions, type ConvertResult, type Engine, type FreqScale } from "./convert";
+import RangeSlider from "./RangeSlider";
 import "./App.css";
 
 const SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY as string;
@@ -289,24 +290,19 @@ export default function App() {
         </label>
         <label className="wide">
           频率范围 {fmin} Hz – {fmax} Hz
-          <span className="range-row">
-            <input
-              type="range"
-              min={20}
-              max={2000}
-              step={10}
-              value={fmin}
-              onChange={(e) => setFmin(Math.min(Number(e.target.value), fmax - 100))}
-            />
-            <input
-              type="range"
-              min={100}
-              max={20000}
-              step={100}
-              value={fmax}
-              onChange={(e) => setFmax(Math.max(Number(e.target.value), fmin + 100))}
-            />
-          </span>
+          <RangeSlider
+            min={20}
+            max={20000}
+            step={10}
+            lo={fmin}
+            hi={fmax}
+            minGap={100}
+            onChange={(lo, hi) => {
+              setFmin(lo);
+              setFmax(hi);
+            }}
+            format={(v) => (v >= 1000 ? `${v / 1000}kHz` : `${v}Hz`)}
+          />
         </label>
         <label className="wide">
           最暗像素电平 {minDb} dB
