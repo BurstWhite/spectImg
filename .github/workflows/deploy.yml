@@ -1,0 +1,32 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "20.194.8.237 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBiBhhzAkhGffBxw8GZ4XmlW4Wzn9XH+oDxaQ2nbb+h7" >> ~/.ssh/known_hosts
+      - name: Deploy on server
+        run: |
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 azureuser@20.194.8.237 deploy
+      - name: Health check
+        run: |
+          curl -fsS --retry 6 --retry-delay 5 --max-time 30 https://img2spec.burstwhite.me/api/health
+          echo
