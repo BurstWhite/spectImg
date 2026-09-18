@@ -10,7 +10,55 @@ function formatBytes(n: number): string {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
+const FONT_FAMILIES = [
+  { label: "黑体（无衬线）", value: "bold {px}px system-ui, -apple-system, 'PingFang SC', sans-serif" },
+  { label: "宋体（衬线）", value: "bold {px}px 'Songti SC', Georgia, serif" },
+  { label: "等宽", value: "bold {px}px 'SF Mono', Menlo, monospace" },
+];
+
+/**Rasterize text to a white-on-black PNG File, sized to the text.
+ *
+ * White on black: in the spectrogram, lit pixels become sound and black is
+ * silence, so the letters glow out of a quiet background.
+ */
+async function renderTextImage(
+  text: string,
+  fontTemplate: string,
+  fontSize: number,
+): Promise<File | null> {
+  const lines = text.split("\n").filter((l) => l.trim() !== "");
+  if (lines.length === 0) return null;
+  const font = fontTemplate.replace("{px}", String(fontSize));
+
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  ctx.font = font;
+  const widths = lines.map((l) => ctx.measureText(l).width);
+  const pad = Math.ceil(fontSize * 0.4);
+  canvas.width = Math.min(Math.ceil(Math.max(...widths)) + pad * 2, 2000);
+  canvas.height = lines.length * Math.ceil(fontSize * 1.25) + pad * 2;
+
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#fff";
+  ctx.font = font;
+  ctx.textBaseline = "top";
+  const lineHeight = Math.ceil(fontSize * 1.25);
+  lines.forEach((line, i) => {
+    ctx.fillText(line, pad, pad + i * lineHeight);
+  });
+
+  const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/png"));
+  if (!blob) return null;
+  return new File([blob], "text.png", { type: "image/png" });
+}
+
 export default function App() {
+  const [mode, setMode] = useState<"image" | "text">("image");
+  const [text, setText] = useState("");
+  const [fontIdx, setFontIdx] = useState(0);
+  const [fontSize, setFontSize] = useState(120);
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [freqScale, setFreqScale] = useState<FreqScale>("linear");
@@ -52,7 +100,15 @@ export default function App() {
   }, []);
 
   const onConvert = async () => {
-    if (!file || !token) return;
+    let target = file;
+    if (mode === "text") {
+      target = await renderTextImage(text, FONT_FAMILIES[fontIdx].value, fontSize);
+      if (!target) {
+        setError("请输入一些文字");
+        return;
+      }
+    }
+    if (!target || !token) return;
     setBusy(true);
     setError(null);
     try {
@@ -61,7 +117,7 @@ export default function App() {
         throw new Error("时长必须是 1–60 之间的秒数（留空表示按图片宽度自动）");
       }
       const opts: ConvertOptions = { engine, freqScale, fmin, fmax, duration: dur, minDb };
-      const result = await convertImage(file, token, opts);
+      const result = await convertImage(target, token, opts);
       setResults((r) => [result, ...r]);
       // tokens are single-use: force the widget to issue a fresh one
       setToken(null);
@@ -90,6 +146,70 @@ export default function App() {
         <p className="sub">上传一张图片，生成一段频谱就是这张图的音频（.wav）</p>
       </header>
 
+      <div className="mode-tabs" role="tablist">
+        <button
+          role="tab"
+          aria-selected={mode === "image"}
+          className={mode === "image" ? "active" : ""}
+          onClick={() => setMode("image")}
+        >
+          上传图片
+        </button>
+        <button
+          role="tab"
+          aria-selected={mode === "text"}
+          className={mode === "text" ? "active" : ""}
+          onClick={() => setMode("text")}
+        >
+          输入文字
+        </button>
+      </div>
+
+      {mode === "text" ? (
+        <section className="text-panel">
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="输入要藏进频谱的文字，支持多行"
+            rows={3}
+          />
+          <div className="text-controls">
+            <label>
+              字体
+              <select value={fontIdx} onChange={(e) => setFontIdx(Number(e.target.value))}>
+                {FONT_FAMILIES.map((f, i) => (
+                  <option key={f.label} value={i}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="grow">
+              字号 {fontSize}px
+              <input
+                type="range"
+                min={40}
+                max={220}
+                step={10}
+                value={fontSize}
+                onChange={(e) => setFontSize(Number(e.target.value))}
+              />
+            </label>
+          </div>
+          {text.trim() !== "" && (
+            <p className="text-preview">
+              <span
+                style={{
+                  fontFamily: FONT_FAMILIES[fontIdx].value.replace(/^bold \d+px /, "").replace(/\{px\}/, ""),
+                  fontSize: "min(2rem, 6vw)",
+                }}
+              >
+                {text.split("\n").filter((l) => l.trim()).join(" / ")}
+              </span>
+            </p>
+          )}
+        </section>
+      ) : (
       <section
         className={`dropzone ${dragOver ? "drag" : ""} ${previewUrl ? "has-image" : ""}`}
         onDragOver={(e) => {
@@ -126,7 +246,8 @@ export default function App() {
           </div>
         )}
       </section>
-      {file && (
+      )}
+      {mode === "image" && file && (
         <p className="fileinfo">
           {file.name} · {formatBytes(file.size)}
           <button className="linklike" onClick={() => setFile(null)}>
@@ -211,7 +332,7 @@ export default function App() {
         />
         <button
           className="convert"
-          disabled={!file || !token || busy}
+          disabled={(mode === "image" ? !file : text.trim() === "") || !token || busy}
           onClick={onConvert}
         >
           {busy ? "合成中…（可能需要十几到几十秒，请勿关闭页面）" : "转换为 .wav"}

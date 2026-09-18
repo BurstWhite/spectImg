@@ -51,6 +51,91 @@ header h1 {
   color: var(--fg-dim);
 }
 
+.mode-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.mode-tabs button {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--fg-dim);
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.mode-tabs button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.text-panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.text-panel textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 1rem;
+  font-family: inherit;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.text-controls {
+  display: flex;
+  gap: 16px;
+}
+
+.text-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.9rem;
+  color: var(--fg-dim);
+}
+
+.text-controls label.grow {
+  flex: 1;
+}
+
+.text-controls select {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.text-controls input[type="range"] {
+  accent-color: var(--accent);
+}
+
+.text-preview {
+  margin: 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .dropzone {
   border: 2px dashed var(--border);
   border-radius: 12px;
